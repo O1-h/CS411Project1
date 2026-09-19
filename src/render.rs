@@ -25,7 +25,38 @@ pub fn ray_sphere_intersect(ray: &Ray, sphere: &Sphere) -> Option<f64> {
     // if discriminant < 0.0, no hit -> None
     // otherwise compute both roots, return the smallest POSITIVE one (t > small epsilon),
     // or None if both roots are <= epsilon (sphere is entirely behind the ray).
-    None
+   let oc =ray.origin - sphere.center_vec();
+   let a = ray.direction.dot(&ray.direction);
+   let b = 2.0 * oc.dot(&ray.direction);
+   let c = oc.dot(&oc) - sphere.radius * sphere.radius;
+   let disc = b*b -4.0*a*c;
+   // return the smallest positive root
+    if disc < 0.0 {
+        None
+    }else {
+        None //temp
+    }
+    
+
+
+    //for later ?
+    /*} else {
+        let sqrt_disc = disc.sqrt();
+        let t1 = (-b - sqrt_disc) / (2.0 * a);
+        let t2 = (-b + sqrt_disc) / (2.0 * a);
+        if t1 > 1e-4 {
+            Some(t1)
+        } else if t2 > 1e-4 {
+            Some(t2)
+        } else {
+            None
+        }
+    }
+   
+   
+   */
+   
+    
 }
 
 /// Find the closest sphere (if any) a ray hits, returning (sphere_index, t, hit_point, normal).
