@@ -33,14 +33,8 @@ pub fn ray_sphere_intersect(ray: &Ray, sphere: &Sphere) -> Option<f64> {
    // return the smallest positive root
     if disc < 0.0 {
         None
-    }else {
-        None //temp
-    }
-    
-
-
-    //for later ?
-    /*} else {
+    } else {
+        //finds the roots
         let sqrt_disc = disc.sqrt();
         let t1 = (-b - sqrt_disc) / (2.0 * a);
         let t2 = (-b + sqrt_disc) / (2.0 * a);
@@ -54,7 +48,7 @@ pub fn ray_sphere_intersect(ray: &Ray, sphere: &Sphere) -> Option<f64> {
     }
    
    
-   */
+   
    
     
 }
@@ -90,8 +84,25 @@ fn generate_camera_ray(scene: &Scene, px: u32, py: u32) -> Ray {
     //   a 0.5-pixel offset so you sample pixel CENTERS, not corners),
     //   then to a direction: forward + right*ndc_x*half_width + up*ndc_y*half_height.
     // - Return Ray::new(camera.position, direction).
+
     let position = Vec3::new(scene.camera.position[0], scene.camera.position[1], scene.camera.position[2]);
-    Ray::new(position, Vec3::new(0.0, 0.0, -1.0))
+    let look_at = Vec3::new(scene.camera.look_at[0], scene.camera.look_at[1], scene.camera.look_at[2]);
+
+    let forward = (look_at - position).normalize();
+    let right = forward.cross(&Vec3::new(0.0, 1.0, 0.0)).normalize();
+    let up = right.cross(&forward);
+
+    let half_height = (scene.camera.fov_degrees.to_radians() / 2.0).tan();
+    let half_width = half_height * scene.width as f64 / scene.height as f64;
+
+    let ndc_x = 2.0 * (px as f64 + 0.5) / scene.width as f64 - 1.0;
+    let ndc_y = 1.0 - 2.0 * (py as f64 + 0.5) / scene.height as f64;
+
+    let direction = (forward + right * (ndc_x * half_width) + up * (ndc_y * half_height)).normalize();
+    Ray::new(position, direction)
+
+
+    
 }
 
 /// Single-bounce Lambertian shading with hard shadows. For each
@@ -99,20 +110,20 @@ fn generate_camera_ray(scene: &Scene, px: u32, py: u32) -> Ray {
 /// occluded by any sphere, that light contributes zero.
 fn shade(scene: &Scene, sphere_index: usize, hit_point: Vec3, normal: Vec3) -> Vec3 {
     // TODO (Phase 2):
-    // let material = &scene.spheres[sphere_index].material;
-    // let mut color = Vec3::zero();
-    // for light in &scene.lights {
-    //     let to_light = (light.position_vec() - hit_point).normalize();
-    //     let shadow_ray = Ray::new(hit_point + normal * 1e-4, to_light); // offset to avoid self-intersection
-    //     let in_shadow = closest_hit(&shadow_ray, &scene.spheres).is_some();
-    //     if !in_shadow {
-    //         let diffuse = normal.dot(&to_light).max(0.0) * light.intensity;
-    //         color = color + material.color_vec() * diffuse;
-    //     }
-    // }
-    // color.clamp01()
-    let _ = (scene, sphere_index, hit_point, normal);
-    Vec3::zero()
+     let material = &scene.spheres[sphere_index].material;
+     let mut color = Vec3::zero();
+     for light in &scene.lights {
+         let to_light = (light.position_vec() - hit_point).normalize();
+         let shadow_ray = Ray::new(hit_point + normal * 1e-4, to_light); // offset to avoid self-intersection
+         let in_shadow = closest_hit(&shadow_ray, &scene.spheres).is_some();
+         if !in_shadow {
+             let diffuse = normal.dot(&to_light).max(0.0) * light.intensity;
+             color = color + material.color_vec() * diffuse;
+         }
+     }
+     color.clamp01()
+  //  let _ = (scene, sphere_index, hit_point, normal);
+  //  Vec3::zero()
 }
 
 fn trace_ray(scene: &Scene, ray: &Ray) -> Vec3 {
@@ -154,6 +165,32 @@ pub fn render_parallel(scene: &Arc<Scene>, num_threads: usize) -> Vec<Pixel> {
     // Vec<Pixel>, returns it; after all threads join, concatenate the
     // bands back together in row order to reassemble the full image
     // (bands must stay in original top-to-bottom order).
-    let _ = num_threads;
-    render_sequential(scene)
+    //let _ = num_threads;
+    //render_sequential(scene)
+    let height = scene.height;
+    let threads = num_threads.max(1) as u32;
+    let band = (height + threads - 1) / threads; // rows per band
+
+    thread::scope(|s| {
+        let mut handles = Vec::new();
+        for t in 0..threads {
+            let start = t * band;
+            let end = ((t + 1) * band).min(height);
+            if start >= end {
+                break;
+            }
+            handles.push(s.spawn(move || {
+                let mut local = Vec::with_capacity(((end - start) * scene.width) as usize);
+                for py in start..end {
+                    for px in 0..scene.width {
+                        let ray = generate_camera_ray(scene, px, py);
+                        local.push(to_pixel(trace_ray(scene, &ray)));
+                    }
+                }
+                local
+            }));
+        }
+        // join in order
+        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    })
 }

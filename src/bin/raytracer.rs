@@ -20,25 +20,33 @@ fn write_png(pixels: &[raytracer::render::Pixel], width: u32, height: u32, path:
 }
 
 fn main() {
+    let t_load = Instant::now();
     let scene = Arc::new(Scene::load_from_file("scene_test.json").expect("failed to load scene_test.json"));
+    let load_secs = t_load.elapsed().as_secs_f64();
 
     println!("Rendering sequential baseline...");
     let t0 = Instant::now();
     let seq_pixels = render_sequential(&scene);
     let seq_time = t0.elapsed().as_secs_f64();
+    let t_enc = Instant::now();
     write_png(&seq_pixels, scene.width, scene.height, "render_sequential.png");
+    let encode_secs = t_enc.elapsed().as_secs_f64();
     println!("Sequential: {:.3}s\n", seq_time);
+    // Amdahl's Law
+    let f = (load_secs + encode_secs) / (load_secs + seq_time + encode_secs);
+    println!("Load: {:.4}s, PNG encode: {:.4}s, sequential fraction f = {:.4}", load_secs, encode_secs, f);
 
-    println!("Threads |  Time (s) | Speedup");
-    println!("--------+-----------+--------");
-    println!("{:7} | {:9.3} | {:7.2}", 1, seq_time, 1.0);
+    println!("Threads |  Time (s) | Speedup | Amdahl");
+    println!("--------+-----------+---------+-------");
+    println!("{:7} | {:9.3} | {:7.2} | {:6.2}", 1, seq_time, 1.0, 1.0);
 
     let mut last_pixels = seq_pixels;
     for &n in &[2usize, 4, 8] {
         let t1 = Instant::now();
         let pixels = render_parallel(&scene, n);
         let elapsed = t1.elapsed().as_secs_f64();
-        println!("{:7} | {:9.3} | {:7.2}", n, elapsed, seq_time / elapsed);
+        let amdahl = 1.0 / (f + (1.0 - f) / n as f64);
+        println!("{:7} | {:9.3} | {:7.2} | {:6.2}", n, elapsed, seq_time / elapsed, amdahl);
         last_pixels = pixels;
     }
 
@@ -48,9 +56,10 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use raytracer::render::ray_sphere_intersect;
-    use raytracer::scene::{Material, Sphere};
+    use raytracer::render::{ray_sphere_intersect, render_parallel, render_sequential};
+    use raytracer::scene::{Material, Scene, Sphere};
     use raytracer::vec3::{Ray, Vec3};
+    use std::sync::Arc;
 
     fn unit_sphere_at_origin() -> Sphere {
         Sphere {
@@ -94,6 +103,24 @@ mod tests {
         let ray = Ray::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
         assert!(ray_sphere_intersect(&ray, &sphere).is_none());
     }
+
+    #[test]
+    fn one_thread_and_eight_threads_are_pixel_identical() {
+        let scene = Arc::new(Scene::load_from_file("scene_test.json").expect("failed to load scene_test.json"));
+
+        let seq = render_sequential(&scene);
+        let one = render_parallel(&scene, 1);
+        let eight = render_parallel(&scene, 8);
+
+        assert_eq!(one.len(), eight.len());
+        assert_eq!(seq.len(), eight.len());
+        for i in 0..one.len() {
+            assert_eq!((one[i].r, one[i].g, one[i].b), (eight[i].r, eight[i].g, eight[i].b), "1 vs 8 threads differ at pixel {i}");
+            assert_eq!((seq[i].r, seq[i].g, seq[i].b), (eight[i].r, eight[i].g, eight[i].b), "sequential vs 8 threads differ at pixel {i}");
+        }
+    }
+
+
 
     // NOTE: the 1-thread vs. 8-thread pixel-identical test (Part B,
     // Requirement 4) needs a real scene_test.json loaded via
